@@ -1,0 +1,777 @@
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+      let previousChatUser = null;
+      const myId = <%= user.id %>;
+      const socket = io();
+      let selectedUser = null;
+      let editingMessageId = null;
+      let currentChatStatus = "";
+      let cloudinaryUrl = null;
+      let messageType = "text";
+      let typingTimeout = null;
+      let isTyping = false;
+      
+      socket.emit("join");
+      socket.on("unread_counts", (list) => {
+        list.forEach(({ senderId, count }) => {
+          const userDiv = document.getElementById(`user-${senderId}`);
+          if (!userDiv) return;
+
+          let badge = userDiv.querySelector(".badgeC");
+
+          if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "badgeC";
+            userDiv.appendChild(badge);
+          }
+
+          badge.innerText = count;
+        });
+      });
+
+
+      document.getElementById("msg").addEventListener("input", () => {
+        if (!selectedUser) return;
+
+        if (!isTyping) {
+          socket.emit("typing", { receiverId: selectedUser });
+          isTyping = true;
+        }
+
+        clearTimeout(typingTimeout);
+
+        typingTimeout = setTimeout(() => {
+          socket.emit("stop_typing", { receiverId: selectedUser });
+          isTyping = false;
+        }, 1200);
+      });
+
+      socket.on("rate_limited", ({ message }) => {
+        alert(message);
+      });
+
+      socket.on("unread_update", ({ fromUserId }) => {
+            const userDiv = document.getElementById(`user-${fromUserId}`);
+            if (!userDiv) return;
+
+            let badgeC = userDiv.querySelector(".badgeC");
+
+            if (!badgeC) {
+            badgeC = document.createElement("span");
+            badgeC.className = "badgeC";
+            badgeC.innerText = "1";
+            userDiv.appendChild(badgeC);
+            } else {
+            badgeC.innerText = Number(badgeC.innerText) + 1;
+            }
+        });
+
+      socket.on("user_typing", ({ senderId }) => {
+        // console.log('aftertyping');
+        if (senderId === selectedUser) {
+          isTyping = true;
+          document.getElementById("chat-status").innerText = "typing...";
+        }
+      });
+
+      socket.on("stop_typing", ({ senderId }) => {
+        if (senderId === selectedUser) {
+          isTyping = false;
+          document.getElementById("chat-status").innerText = currentChatStatus;
+        }
+      });
+
+      socket.on("user_status", ({ userId, onlineStatus, lastSeen }) => {
+        if (userId === selectedUser) {
+          currentChatStatus = onlineStatus
+            ? "online"
+            : "last seen " + formatTime(lastSeen);
+
+          // only update UI if NOT typing
+          if (!isTyping) {
+            document.getElementById("chat-status").innerText = currentChatStatus;
+          }
+        }
+      });
+
+      function formatTime(date) {
+        if (!date) return "";
+        const d = new Date(date);
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+     function openChat(userId, userName) {
+        if (previousChatUser && previousChatUser !== userId) {
+          socket.emit("stop_typing", {
+            receiverId: previousChatUser,
+          });
+        }
+
+        previousChatUser = userId;
+        selectedUser = userId;
+
+        isTyping = false;
+        document.getElementById("chat-status").innerText = "";
+
+        
+        socket.emit("chat_opened", {
+          withUserId: userId,
+        });
+
+        socket.emit("mark_read", {
+          withUserId: userId,
+        });
+
+        document.getElementById("chat-username").innerText = userName;
+        highlightSelectedUser(userId);
+
+        const badge = document
+          .getElementById(`user-${userId}`)
+          ?.querySelector(".badgeC");
+        if (badge) badge.remove();
+
+        fetch(`/user/status/${userId}`)
+          .then((res) => res.json())
+          .then((data) => {
+            currentChatStatus = data.onlineStatus
+              ? "online"
+              : "last seen " + formatTime(data.lastSeen);
+
+            document.getElementById("chat-status").innerText = currentChatStatus;
+          });
+
+        loadMessages();
+        
+        
+      }
+
+      function highlightSelectedUser(userId) {
+        document
+          .querySelectorAll(".users div")
+          .forEach((div) => (div.style.background = ""));
+        const sel = document.getElementById(`user-${userId}`);
+        if (sel) sel.style.background = "#e0e0e0";
+      }
+
+      function loadMessages() {
+        if (!selectedUser) return;
+        fetch(`/chat/history/${selectedUser}`)
+          .then((res) => res.json())
+          .then((data) => {
+            const messagesArray = data.messages; 
+            const box = document.getElementById("messages");
+            box.innerHTML = "";
+
+            console.log(messagesArray);
+
+            messagesArray.forEach((m) => {
+        const div = document.createElement("div");
+        div.className = Number(m.senderId) === Number(myId) ? "me" : "other";
+
+        // inline edit
+        if (m.id === editingMessageId) {
+          renderInlineEdit(div, m);
+          box.appendChild(div);
+          return;
+        }
+
+        if (m.isDeleted) {
+          div.innerHTML = `<i>This message was deleted</i>`;
+          box.appendChild(div);
+          return;
+        }
+
+        // MEDIA
+        if (m.type === "image") {
+          const img = document.createElement("img");
+          img.src = m.message;
+          img.style.maxWidth = "200px";
+          div.appendChild(img);
+        } else if (m.type === "video") {
+          const video = document.createElement("video");
+          video.src = m.message;
+          video.controls = true;
+          video.style.maxWidth = "250px";
+          div.appendChild(video);
+        } else if (m.type === "audio") {
+          const audio = document.createElement("audio");
+          audio.src = m.message;
+          audio.controls = true;
+          div.appendChild(audio);
+        } else if (m.type === "file") {
+          const link = document.createElement("a");
+          link.href = m.message;
+          link.innerText = "Download file";
+          link.target = "_blank";
+          div.appendChild(link);
+        } else {
+          // only text
+          const text = document.createElement("span");
+          text.innerText = m.message;
+          div.appendChild(text);
+        }
+
+        // edited small
+        if (m.isEdited) {
+          const edited = document.createElement("small");
+          edited.innerText = " (edited)";
+          edited.style.color = "gray";
+          edited.style.fontSize = "10px";
+          div.appendChild(edited);
+        }
+
+        // actions for own messages
+        if (Number(m.senderId) === Number(myId)) {
+          const actions = document.createElement("div");
+          actions.className = "actions";
+
+          const editBtn = document.createElement("button");
+          editBtn.innerText = "Edit";
+          editBtn.onclick = () => enableInlineEdit(div, m);
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.innerText = "Delete";
+          deleteBtn.onclick = () => deleteMessage(m.id);
+
+          actions.appendChild(editBtn);
+          actions.appendChild(deleteBtn);
+          div.appendChild(actions);
+        }
+
+        box.appendChild(div);
+      });
+
+            box.scrollTop = box.scrollHeight;
+          });
+      }
+
+      function enableInlineEdit(container, message) {
+        editingMessageId = message.id;
+        renderInlineEdit(container, message);
+      }
+
+      function renderInlineEdit(container, message) {
+        container.innerHTML = "";
+
+        const input = document.createElement("input");
+        input.value = message.message;
+        input.style.width = "100%";
+
+        const saveBtn = document.createElement("button");
+        saveBtn.innerText = "Save";
+        saveBtn.onclick = () => {
+          const newMessage = input.value.trim();
+          if (!newMessage) return;
+
+          fetch(`/message/${message.id}/edit`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ newMessage }),
+          }).then(() => {
+            editingMessageId = null;
+            loadMessages();
+          });
+        };
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.innerText = "Cancel";
+        cancelBtn.onclick = () => {
+          editingMessageId = null;
+          loadMessages();
+        };
+
+        container.appendChild(input);
+        container.appendChild(saveBtn);
+        container.appendChild(cancelBtn);
+      }
+
+      function deleteMessage(messageId) {
+        if (!confirm("Are you sure you want to delete this message?")) return;
+
+        fetch(`/message/${messageId}/delete`, { method: "POST" }).then(() =>
+          loadMessages()
+        );
+      }
+
+      const CLOUD_NAME = "dg4cjfum3";
+      const UPLOAD_PRESET = "syed2105";
+
+      function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", UPLOAD_PRESET);
+
+        let cloudinaryEndpoint = "image";
+        if (file.type.startsWith("video")) cloudinaryEndpoint = "video";
+        if (file.type.startsWith("audio")) cloudinaryEndpoint = "video";
+
+        fetch(
+          `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${cloudinaryEndpoint}/upload`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        )
+          .then((res) => res.json())
+          .then((data) => {
+            cloudinaryUrl = data.secure_url;
+
+            if (file.type.startsWith("image")) messageType = "image";
+            else if (file.type.startsWith("video")) messageType = "video";
+            else if (file.type.startsWith("audio")) messageType = "audio";
+
+            alert("File uploaded. Click Send.");
+          })
+          .catch((err) => {
+            console.error(err);
+            alert("Upload failed");
+          });
+      }
+
+      function sendMessage() {
+        const text = document.getElementById("msg").value.trim();
+
+        // nothing to send
+        if (!text && !cloudinaryUrl) return;
+        if (!selectedUser) return;
+
+        socket.emit("send_message", {
+          receiverId: selectedUser,
+          message: cloudinaryUrl || text,
+          type: cloudinaryUrl ? messageType : "text",
+        });
+
+        // reset
+        document.getElementById("msg").value = "";
+        cloudinaryUrl = null;
+        messageType = "text";
+      }
+      
+      function appendMessage(m) {
+        const box = document.getElementById("messages");
+        const div = document.createElement("div");
+        div.className = Number(m.senderId) === Number(myId) ? "me" : "other";
+
+        if (m.type === "text") {
+          div.innerText = m.message;
+        }
+
+        if (m.type === "image") {
+          const img = document.createElement("img");
+          img.src = m.message;
+          img.style.maxWidth = "200px";
+          div.appendChild(img);
+        }
+
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+      }
+
+      socket.on("receive_message", (m) => {
+        if (!selectedUser) return;
+
+        if (m.senderId === selectedUser || m.receiverId === selectedUser) {
+          appendMessage(m);
+        }
+      });
+
+      function logout() {
+        socket.disconnect();
+        fetch("/logout", {
+          method: "POST",
+          credentials: "include",
+        }).then(() => {
+          window.location.href = "/login";
+        });
+      }
+
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- 
+<script src="/socket.io/socket.io.js"></script>
+<script>
+      let previousChatUser = null;
+      const myId = <%= user.id %>;
+      const socket = io();
+      let selectedUser = null;
+      let editingMessageId = null;
+      let currentChatStatus = "";
+      let cloudinaryUrl = null;
+      let messageType = "text";
+      let typingTimeout = null;
+      let isTyping = false;
+      
+      socket.emit("join");
+
+      document.getElementById("msg").addEventListener("input", () => {
+        if (!selectedUser) return;
+
+        // emit typing only once
+        if (!isTyping) {
+          socket.emit("typing", { receiverId: selectedUser });
+          isTyping = true;
+        }
+
+        clearTimeout(typingTimeout);
+
+        typingTimeout = setTimeout(() => {
+          socket.emit("stop_typing", { receiverId: selectedUser });
+          isTyping = false;
+        }, 1200);
+      });
+
+      socket.on("unread_update", ({ fromUserId }) => {
+            const userDiv = document.getElementById(`user-${fromUserId}`);
+            if (!userDiv) return;
+
+            let badgeC = userDiv.querySelector(".badgeC");
+
+            if (!badgeC) {
+            badgeC = document.createElement("span");
+            badgeC.className = "badgeC";
+            badgeC.innerText = "1";
+            userDiv.appendChild(badgeC);
+            } else {
+            badgeC.innerText = Number(badgeC.innerText) + 1;
+            }
+        });
+
+      socket.on("user_typing", ({ senderId }) => {
+        // console.log('aftertyping');
+        if (senderId === selectedUser) {
+          isTyping = true;
+          document.getElementById("chat-status").innerText = "typing...";
+        }
+      });
+
+      socket.on("stop_typing", ({ senderId }) => {
+        if (senderId === selectedUser) {
+          isTyping = false;
+          document.getElementById("chat-status").innerText = currentChatStatus;
+        }
+      });
+
+      socket.on("user_status", ({ userId, onlineStatus, lastSeen }) => {
+        if (userId === selectedUser) {
+          currentChatStatus = onlineStatus
+            ? "online"
+            : "last seen " + formatTime(lastSeen);
+
+          // only update UI if NOT typing
+          if (!isTyping) {
+            document.getElementById("chat-status").innerText = currentChatStatus;
+          }
+        }
+      });
+
+      function formatTime(date) {
+        if (!date) return "";
+        const d = new Date(date);
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+     function openChat(userId, userName) {
+        if (previousChatUser && previousChatUser !== userId) {
+          socket.emit("stop_typing", {
+            receiverId: previousChatUser,
+          });
+        }
+
+        previousChatUser = userId;
+        selectedUser = userId;
+
+        isTyping = false;
+        document.getElementById("chat-status").innerText = "";
+
+        
+        socket.emit("chat_opened", {
+          withUserId: userId,
+        });
+
+        socket.emit("mark_read", {
+          withUserId: userId,
+        });
+
+        document.getElementById("chat-username").innerText = userName;
+        highlightSelectedUser(userId);
+
+        const badge = document
+          .getElementById(`user-${userId}`)
+          ?.querySelector(".badgeC");
+        if (badge) badge.remove();
+
+        fetch(`/user/status/${userId}`)
+          .then((res) => res.json())
+          .then((data) => {
+            currentChatStatus = data.onlineStatus
+              ? "online"
+              : "last seen " + formatTime(data.lastSeen);
+
+            document.getElementById("chat-status").innerText = currentChatStatus;
+          });
+
+        loadMessages();
+        
+        
+      }
+
+      function highlightSelectedUser(userId) {
+        document
+          .querySelectorAll(".users div")
+          .forEach((div) => (div.style.background = ""));
+        const sel = document.getElementById(`user-${userId}`);
+        if (sel) sel.style.background = "#e0e0e0";
+      }
+
+      function loadMessages() {
+        if (!selectedUser) return;
+        fetch(`/chat/history/${selectedUser}`)
+          .then((res) => res.json())
+          .then((data) => {
+            const messagesArray = data.messages; 
+            const box = document.getElementById("messages");
+            box.innerHTML = "";
+
+            console.log(messagesArray);
+
+            messagesArray.forEach((m) => {
+        const div = document.createElement("div");
+        div.className = Number(m.senderId) === Number(myId) ? "me" : "other";
+
+        // inline edit
+        if (m.id === editingMessageId) {
+          renderInlineEdit(div, m);
+          box.appendChild(div);
+          return;
+        }
+
+        if (m.isDeleted) {
+          div.innerHTML = `<i>This message was deleted</i>`;
+          box.appendChild(div);
+          return;
+        }
+
+        // MEDIA
+        if (m.type === "image") {
+          const img = document.createElement("img");
+          img.src = m.message;
+          img.style.maxWidth = "200px";
+          div.appendChild(img);
+        } else if (m.type === "video") {
+          const video = document.createElement("video");
+          video.src = m.message;
+          video.controls = true;
+          video.style.maxWidth = "250px";
+          div.appendChild(video);
+        } else if (m.type === "audio") {
+          const audio = document.createElement("audio");
+          audio.src = m.message;
+          audio.controls = true;
+          div.appendChild(audio);
+        } else if (m.type === "file") {
+          const link = document.createElement("a");
+          link.href = m.message;
+          link.innerText = "Download file";
+          link.target = "_blank";
+          div.appendChild(link);
+        } else {
+          // only text
+          const text = document.createElement("span");
+          text.innerText = m.message;
+          div.appendChild(text);
+        }
+
+        // edited small
+        if (m.isEdited) {
+          const edited = document.createElement("small");
+          edited.innerText = " (edited)";
+          edited.style.color = "gray";
+          edited.style.fontSize = "10px";
+          div.appendChild(edited);
+        }
+
+        // actions for own messages
+        if (Number(m.senderId) === Number(myId)) {
+          const actions = document.createElement("div");
+          actions.className = "actions";
+
+          const editBtn = document.createElement("button");
+          editBtn.innerText = "Edit";
+          editBtn.onclick = () => enableInlineEdit(div, m);
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.innerText = "Delete";
+          deleteBtn.onclick = () => deleteMessage(m.id);
+
+          actions.appendChild(editBtn);
+          actions.appendChild(deleteBtn);
+          div.appendChild(actions);
+        }
+
+        box.appendChild(div);
+      });
+
+            box.scrollTop = box.scrollHeight;
+          });
+      }
+
+      function enableInlineEdit(container, message) {
+        editingMessageId = message.id;
+        renderInlineEdit(container, message);
+      }
+
+      function renderInlineEdit(container, message) {
+        container.innerHTML = "";
+
+        const input = document.createElement("input");
+        input.value = message.message;
+        input.style.width = "100%";
+
+        const saveBtn = document.createElement("button");
+        saveBtn.innerText = "Save";
+        saveBtn.onclick = () => {
+          const newMessage = input.value.trim();
+          if (!newMessage) return;
+
+          fetch(`/message/${message.id}/edit`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ newMessage }),
+          }).then(() => {
+            editingMessageId = null;
+            loadMessages();
+          });
+        };
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.innerText = "Cancel";
+        cancelBtn.onclick = () => {
+          editingMessageId = null;
+          loadMessages();
+        };
+
+        container.appendChild(input);
+        container.appendChild(saveBtn);
+        container.appendChild(cancelBtn);
+      }
+
+      function deleteMessage(messageId) {
+        if (!confirm("Are you sure you want to delete this message?")) return;
+
+        fetch(`/message/${messageId}/delete`, { method: "POST" }).then(() =>
+          loadMessages()
+        );
+      }
+
+      const CLOUD_NAME = "dg4cjfum3";
+      const UPLOAD_PRESET = "syed2105";
+
+      function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", UPLOAD_PRESET);
+
+        let cloudinaryEndpoint = "image";
+        if (file.type.startsWith("video")) cloudinaryEndpoint = "video";
+        if (file.type.startsWith("audio")) cloudinaryEndpoint = "video";
+
+        fetch(
+          `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${cloudinaryEndpoint}/upload`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        )
+          .then((res) => res.json())
+          .then((data) => {
+            cloudinaryUrl = data.secure_url;
+
+            if (file.type.startsWith("image")) messageType = "image";
+            else if (file.type.startsWith("video")) messageType = "video";
+            else if (file.type.startsWith("audio")) messageType = "audio";
+
+            alert("File uploaded. Click Send.");
+          })
+          .catch((err) => {
+            console.error(err);
+            alert("Upload failed");
+          });
+      }
+
+      function sendMessage() {
+        const text = document.getElementById("msg").value.trim();
+
+        // nothing to send
+        if (!text && !cloudinaryUrl) return;
+        if (!selectedUser) return;
+
+        socket.emit("send_message", {
+          receiverId: selectedUser,
+          message: cloudinaryUrl || text,
+          type: cloudinaryUrl ? messageType : "text",
+        });
+
+        // reset
+        document.getElementById("msg").value = "";
+        cloudinaryUrl = null;
+        messageType = "text";
+      }
+      
+      function appendMessage(m) {
+        const box = document.getElementById("messages");
+        const div = document.createElement("div");
+        div.className = Number(m.senderId) === Number(myId) ? "me" : "other";
+
+        if (m.type === "text") {
+          div.innerText = m.message;
+        }
+
+        if (m.type === "image") {
+          const img = document.createElement("img");
+          img.src = m.message;
+          img.style.maxWidth = "200px";
+          div.appendChild(img);
+        }
+
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+      }
+
+      socket.on("receive_message", (m) => {
+        if (!selectedUser) return;
+
+        if (m.senderId === selectedUser || m.receiverId === selectedUser) {
+          appendMessage(m);
+        }
+      });
+
+      function logout() {
+        socket.disconnect();
+        fetch("/logout", {
+          method: "POST",
+          credentials: "include",
+        }).then(() => {
+          window.location.href = "/login";
+        });
+      }
+
+</script>
+ -->

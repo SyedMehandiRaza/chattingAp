@@ -1,0 +1,102 @@
+<%- include("header.ejs") %>
+
+<div class="container">
+  <div class="users">
+    <h3>Users</h3>
+
+    <% if (users && users.length) { %> <% users.forEach(u => { %>
+    <div
+      class="user-item"
+      id="user-<%= u.id %>"
+      onclick="openChat(<%= u.id %>, '<%= u.name %>')"
+    >
+      <%= u.name %> <% if (u.unreadCount > 0) { %>
+      <span class="badgeC"><%= u.unreadCount %></span>
+      <% } %>
+    </div>
+    <% }) %> <% } else { %>
+    <p>No users found</p>
+    <% } %>
+
+    <br />
+    <a href="#" onclick="logout()">Logout</a>
+  </div>
+
+  <!-- CHAT AREA -->
+  <div class="chat" id="chatBox">
+    <div class="chat-navbar">
+      <div id="chat-username">Select a user to chat</div>
+      <p id="chat-status"></p>
+    </div>
+
+    <div class="messages" id="messages">
+    </div>
+
+    <div class="input">
+      <label for="fileInput" style="cursor: pointer; margin-right: 8px"
+        >📎</label
+      >
+      <input
+        type="file"
+        id="fileInput"
+        hidden
+        accept="image/*,video/*,audio/*"
+        onchange="handleFileUpload(event)"
+      />
+
+      <input type="text" id="msg" placeholder="Type message..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let hasMore = true;
+  let isLoading = false;
+
+  const box = document.getElementById("messages");
+
+  box.addEventListener("scroll", () => {
+    if (box.scrollTop === 0 && hasMore && !isLoading) {
+      loadOlderMessages();
+    }
+  });
+
+  function loadOlderMessages() {
+    if (!selectedUser) return;
+    isLoading = true;
+
+    const oldestMessage = box.firstChild; 
+    const before = oldestMessage?.dataset.createdAt;
+
+    let url = `/chat/history/${selectedUser}`;
+    if (before) url += `?before=${before}`;
+
+    fetch(url)
+      .then((res) => res.json())
+      .then((data) => {
+        const currentScrollHeight = box.scrollHeight;
+
+        data.messages.forEach((msg) => prependMessage(msg));
+
+        box.scrollTop = box.scrollHeight - currentScrollHeight;
+
+        hasMore = data.hasMore;
+        isLoading = false;
+      });
+  }
+
+
+  function prependMessage(msg) {
+    const box = document.getElementById("messages");
+    const div = document.createElement("div");
+    div.className = Number(msg.senderId) === Number(myId) ? "me" : "other";
+    div.innerText = msg.message;
+    div.dataset.createdAt = msg.createdAt;
+    box.prepend(div);
+  }
+</script>
+
+
+<%- include("footer.ejs") %>
+
