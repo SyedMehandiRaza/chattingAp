@@ -6,15 +6,9 @@ const { log } = require("console");
 const server = http.createServer(app);
 
 socketHandler(server);
-console.log("🚀 Production log test");
-log('wshfff')
 
-console.log("DB HOST:", process.env.P_DB_HOST);
-console.log("DB NAME:", process.env.P_DB_NAME);
+const PORT = process.env.PORT || 2121;
 
-
-const PORT = process.env.PORT || 8080;
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-});
+server.listen(PORT, () => {
+    log(`Server is running at Port: ${PORT}`)
+})

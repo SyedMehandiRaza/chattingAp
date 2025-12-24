@@ -3,12 +3,13 @@ const jwt = require("jsonwebtoken");
 const cookie = require("cookie");
 const messageService = require("../services/message.service");
 
-const redis = require('../config/redis');
 const redisClient = require("../config/redis");
 const { isRateLimited } = require("../utils/rateLimiter");
 
 module.exports = (server) => {
+
   const io = require("socket.io")(server);
+
   io.use((socket, next) => {
     try {
       const rawCookie = socket.handshake.headers.cookie;
@@ -34,8 +35,6 @@ module.exports = (server) => {
 
   io.on("connection", (socket) => {
 
-    console.log("Socket connected:", socket.id);
-
     socket.on("join", async () => {
       const userId = socket.userId;
       socket.join(`user:${userId}`);
@@ -55,8 +54,6 @@ module.exports = (server) => {
         count: Number(count)
       })
       }
-
-      
 
       socket.emit("unread_counts", unreadCounts);
 
@@ -78,7 +75,7 @@ module.exports = (server) => {
         const limited = await isRateLimited(socket.userId);
           if (limited) {
             socket.emit("rate_limited", {
-              message: "Too many messages. Please slow down ho ja bhai.",
+              message: "Too many messages. Please slow down message count.",
             });
             return;
           }
@@ -90,9 +87,7 @@ module.exports = (server) => {
           type: data.type,
         });
 
-        // const receiverActiveChat = redisClient.get(
-        //   `active_chat:${data.receiverId}`
-        // )
+
         const receiverActiveChat = await redisClient.get(
           `active_chat:${data.receiverId}`
         );
@@ -117,8 +112,6 @@ module.exports = (server) => {
           .emit("receive_message", msg);
         // io.to(`user:${socket.userId}`).emit("receive_message", msg);
       } catch (err) {
-        console.log(err);
-        
         console.error("Message send error:", err.message);
       }
     });

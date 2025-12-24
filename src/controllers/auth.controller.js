@@ -33,19 +33,11 @@ exports.loginController = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // res.cookie("token", token, {
-    //   httpOnly: true,
-    //   secure: false, 
-    //   maxAge: 7 * 24 * 60 * 60 * 1000 
-    // });
-
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none",
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      secure: false, 
+      maxAge: 7 * 24 * 60 * 60 * 1000 
     });
-
 
     req.flash("success", "Login Successfully");
     return res.redirect("/chat");
@@ -85,18 +77,11 @@ exports.signupController = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // res.cookie("token", token, {
-    //   httpOnly: true,
-    //   secure: false, 
-    //   maxAge: 7 * 24 * 60 * 60 * 1000
-    // });
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none",
+      secure: false, 
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
-
 
     req.flash("success", "Signup successful");
     return res.redirect("/chat");
@@ -109,11 +94,7 @@ exports.signupController = async (req, res) => {
 };
 
 exports.logoutController = (req, res) => {
-  res.clearCookie("token", {
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "none"
-  });
-
+  res.clearCookie("token"); 
   req.flash("success", "Logged out successfully");
   return res.redirect("/login");
 };

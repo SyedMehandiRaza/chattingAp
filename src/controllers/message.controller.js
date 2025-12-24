@@ -1,138 +1,138 @@
 const { User, Message } = require("../models");
 const { Op } = require("sequelize");
 
-exports.chatPage = async (req, res) => {
-  const users = await User.findAll({
-    where: { id: { [Op.ne]: req.session.user.id } },
-  });
+// exports.chatPage = async (req, res) => {
+//   const users = await User.findAll({
+//     where: { id: { [Op.ne]: req.user.id } },
+//   });
 
-  res.render("chat", { users });
-};
+//   res.render("chat", { users });
+// };
 
-exports.markAsRead = async (req, res) => {
-  console.log('inside markasread -------------------------------------- ');
+// exports.markAsRead = async (req, res) => {
+//   console.log('inside markasread -------------------------------------- ');
   
-  const { userId } = req.params;
-  const myId = req.user.id;
+//   const { userId } = req.params;
+//   const myId = req.user.id;
 
-  await Message.update(
-    { isRead: true },
-    {
-      where: {
-        senderId: userId,
-        receiverId: myId,
-        isRead: false,
-      },
-    }
-  );
+//   await Message.update(
+//     { isRead: true },
+//     {
+//       where: {
+//         senderId: userId,
+//         receiverId: myId,
+//         isRead: false,
+//       },
+//     }
+//   );
 
-  res.json({ success: true });
-};
+//   res.json({ success: true });
+// };
 
-exports.chatList = async (req, res) => {
-  const myId = req.session.user.id;
+// exports.chatList = async (req, res) => {
+//   const myId = req.user.id;
 
-  const users = await User.findAll({
-    where: { id: { [Op.ne]: myId } },
-  });
+//   const users = await User.findAll({
+//     where: { id: { [Op.ne]: myId } },
+//   });
 
-  let finalList = [];
+//   let finalList = [];
 
-  for (let u of users) {
-    const lastMsg = await Message.findOne({
-      where: {
-        [Op.or]: [
-          { senderId: myId, receiverId: u.id },
-          { senderId: u.id, receiverId: myId },
-        ],
-      },
-      order: [["createdAt", "DESC"]],
-    });
+//   for (let u of users) {
+//     const lastMsg = await Message.findOne({
+//       where: {
+//         [Op.or]: [
+//           { senderId: myId, receiverId: u.id },
+//           { senderId: u.id, receiverId: myId },
+//         ],
+//       },
+//       order: [["createdAt", "DESC"]],
+//     });
 
-    const unreadCount = await Message.count({
-      where: {
-        senderId: u.id,
-        receiverId: myId,
-        isRead: false,
-      },
-    });
+//     const unreadCount = await Message.count({
+//       where: {
+//         senderId: u.id,
+//         receiverId: myId,
+//         isRead: false,
+//       },
+//     });
 
-    finalList.push({
-      user: u,
-      lastMessage: lastMsg ? lastMsg.message : "",
-      unreadCount,
-    });
-  }
+//     finalList.push({
+//       user: u,
+//       lastMessage: lastMsg ? lastMsg.message : "",
+//       unreadCount,
+//     });
+//   }
 
-  res.json(finalList);
-};
+//   res.json(finalList);
+// };
 
-exports.chatList = async (req, res) => {
-  try {
-    const myId = req.user.id; // read from JWT
+// exports.chatList = async (req, res) => {
+//   try {
+//     const myId = req.user.id; // read from JWT
 
-    // Get all other users
-    const users = await User.findAll({
-      where: { id: { [Op.ne]: myId } },
-      raw: true,
-    });
+//     // Get all other users
+//     const users = await User.findAll({
+//       where: { id: { [Op.ne]: myId } },
+//       raw: true,
+//     });
 
-    const userIds = users.map((u) => u.id);
+//     const userIds = users.map((u) => u.id);
 
-    if (userIds.length === 0) return res.json([]);
+//     if (userIds.length === 0) return res.json([]);
 
-    // Get all last messages between myId and all users
-    const messages = await Message.findAll({
-      where: {
-        [Op.or]: [
-          { senderId: myId, receiverId: userIds },
-          { senderId: userIds, receiverId: myId },
-        ],
-      },
-      order: [["createdAt", "DESC"]],
-      raw: true,
-    });
+//     // Get all last messages between myId and all users
+//     const messages = await Message.findAll({
+//       where: {
+//         [Op.or]: [
+//           { senderId: myId, receiverId: userIds },
+//           { senderId: userIds, receiverId: myId },
+//         ],
+//       },
+//       order: [["createdAt", "DESC"]],
+//       raw: true,
+//     });
 
-    // group messages user-wise
-    const lastMessageMap = {};
-    for (let msg of messages) {
-      const chatPartner = msg.senderId === myId ? msg.receiverId : msg.senderId;
+//     // group messages user-wise
+//     const lastMessageMap = {};
+//     for (let msg of messages) {
+//       const chatPartner = msg.senderId === myId ? msg.receiverId : msg.senderId;
 
-      if (!lastMessageMap[chatPartner]) {
-        lastMessageMap[chatPartner] = msg;
-      }
-    }
+//       if (!lastMessageMap[chatPartner]) {
+//         lastMessageMap[chatPartner] = msg;
+//       }
+//     }
 
-    // Get unread message counts for all users
-    const unreadCounts = await Message.findAll({
-      where: {
-        senderId: userIds,
-        receiverId: myId,
-        isRead: false,
-      },
-      attributes: ["senderId", [Sequelize.fn("COUNT", "senderId"), "count"]],
-      group: ["senderId"],
-      raw: true,
-    });
+//     // Get unread message counts for all users
+//     const unreadCounts = await Message.findAll({
+//       where: {
+//         senderId: userIds,
+//         receiverId: myId,
+//         isRead: false,
+//       },
+//       attributes: ["senderId", [Sequelize.fn("COUNT", "senderId"), "count"]],
+//       group: ["senderId"],
+//       raw: true,
+//     });
 
-    const unreadMap = {};
-    unreadCounts.forEach((u) => {
-      unreadMap[u.senderId] = u.count;
-    });
+//     const unreadMap = {};
+//     unreadCounts.forEach((u) => {
+//       unreadMap[u.senderId] = u.count;
+//     });
 
-    // Build final list
-    const finalList = users.map((u) => ({
-      user: u,
-      lastMessage: lastMessageMap[u.id]?.message || "",
-      unreadCount: unreadMap[u.id] || 0,
-    }));
+//     // Build final list
+//     const finalList = users.map((u) => ({
+//       user: u,
+//       lastMessage: lastMessageMap[u.id]?.message || "",
+//       unreadCount: unreadMap[u.id] || 0,
+//     }));
 
-    res.json(finalList);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-};
+//     res.json(finalList);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: "Internal server error" });
+//   }
+// };
 
 exports.editChat = async (req, res) => {
   try {
@@ -254,7 +254,7 @@ exports.getChatHistory = async (req, res) => {
       raw: true,
     });
 
-    console.log(messages,'pag------------------------------------------------->');
+    console.log(messages,'page ------------------------------------------------- >');
 
     res.json({
       messages: messages.reverse(),
@@ -265,29 +265,6 @@ exports.getChatHistory = async (req, res) => {
     res.status(500).json({ message: "Failed to load chat history" });
   }
 };
-
-// exports.getChatHistory = async (req, res) => {
-//   try {
-//     const myId = req.user.id;
-//     const { receiverId } = req.params;
-
-//     const messages = await Message.findAll({
-//       where: {
-//         [Op.or]: [
-//           { senderId: myId, receiverId },
-//           { senderId: receiverId, receiverId: myId },
-//         ],
-//       },
-//       order: [["createdAt", "ASC"]],
-//       raw: true,
-//     });
-
-//     res.json(messages);
-//   } catch (error) {
-//     console.error("Error fetching chat history:", error);
-//     res.status(500).json({ message: "Failed to load chat history" });
-//   }
-// };
 
 exports.getUserStatus = async (req, res) => {
   const user = await User.findByPk(req.params.userId, {

@@ -1,5 +1,4 @@
 
-<script src="/socket.io/socket.io.js"></script>
 <script>
       let previousChatUser = null;
       const myId = <%= user.id %>;
@@ -13,6 +12,7 @@
       let isTyping = false;
       
       socket.emit("join");
+
       socket.on("unread_counts", (list) => {
         list.forEach(({ senderId, count }) => {
           const userDiv = document.getElementById(`user-${senderId}`);
@@ -29,7 +29,6 @@
           badge.innerText = count;
         });
       });
-
 
       document.getElementById("msg").addEventListener("input", () => {
         if (!selectedUser) return;
@@ -52,23 +51,22 @@
       });
 
       socket.on("unread_update", ({ fromUserId }) => {
-            const userDiv = document.getElementById(`user-${fromUserId}`);
-            if (!userDiv) return;
+        const userDiv = document.getElementById(`user-${fromUserId}`);
+        if (!userDiv) return;
 
-            let badgeC = userDiv.querySelector(".badgeC");
+        let badgeC = userDiv.querySelector(".badgeC");
 
-            if (!badgeC) {
-            badgeC = document.createElement("span");
-            badgeC.className = "badgeC";
-            badgeC.innerText = "1";
-            userDiv.appendChild(badgeC);
-            } else {
-            badgeC.innerText = Number(badgeC.innerText) + 1;
-            }
-        });
+        if (!badgeC) {
+        badgeC = document.createElement("span");
+        badgeC.className = "badgeC";
+        badgeC.innerText = "1";
+        userDiv.appendChild(badgeC);
+        } else {
+        badgeC.innerText = Number(badgeC.innerText) + 1;
+        }
+    });
 
       socket.on("user_typing", ({ senderId }) => {
-        // console.log('aftertyping');
         if (senderId === selectedUser) {
           isTyping = true;
           document.getElementById("chat-status").innerText = "typing...";
@@ -101,7 +99,7 @@
         return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       }
 
-     function openChat(userId, userName) {
+      function openChat(userId, userName) {
         if (previousChatUser && previousChatUser !== userId) {
           socket.emit("stop_typing", {
             receiverId: previousChatUser,
@@ -242,9 +240,9 @@
         box.appendChild(div);
       });
 
-            box.scrollTop = box.scrollHeight;
-          });
-      }
+      box.scrollTop = box.scrollHeight;
+    });
+  }
 
       function enableInlineEdit(container, message) {
         editingMessageId = message.id;
@@ -335,7 +333,6 @@
       function sendMessage() {
         const text = document.getElementById("msg").value.trim();
 
-        // nothing to send
         if (!text && !cloudinaryUrl) return;
         if (!selectedUser) return;
 
@@ -390,6 +387,21 @@
       }
 
 </script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
