@@ -10,6 +10,7 @@ exports.renderSignup = (req, res) => {
     return res.render("auth/layout/signup.ejs")
 }
 
+
 exports.loginController = async (req, res) => {
   try {
     const { email, password } = req.body;

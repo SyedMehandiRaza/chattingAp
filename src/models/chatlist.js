@@ -1,26 +1,73 @@
-'use strict';
-const {
-  Model
-} = require('sequelize');
+"use strict";
+const { Model } = require("sequelize");
+
 module.exports = (sequelize, DataTypes) => {
   class ChatList extends Model {
-    /**
-     * Helper method for defining associations.
-     * This method is not a part of Sequelize lifecycle.
-     * The `models/index` file will call this method automatically.
-     */
     static associate(models) {
-      // define association here
+      ChatList.hasMany(models.ChatParticipant, {
+        foreignKey: "chatListId",
+        as: "participants",
+      });
+
+      ChatList.hasMany(models.Message, {
+        foreignKey: "chatListId",
+        as: "messages",
+      });
+
+      ChatList.belongsTo(models.Message, {
+        foreignKey: "lastMessageId",
+        as: "lastMessage",
+      });
+    }
+
+    // Helper: Check if a user is part of this chat
+    async isUserParticipant(userId) {
+      const participant = await sequelize.models.ChatParticipant.findOne({
+        where: { chatListId: this.id, userId },
+      });
+      return !!participant;
+    }
+
+    // Helper: Check if a user is admin (for groups)
+    async isUserAdmin(userId) {
+      const participant = await sequelize.models.ChatParticipant.findOne({
+        where: { chatListId: this.id, userId },
+      });
+      return participant?.isAdmin || false;
     }
   }
-  ChatList.init({
-    userId: DataTypes.INTEGER,
-    otherUserId: DataTypes.INTEGER,
-    lastMessage: DataTypes.STRING,
-    unreadCount: DataTypes.INTEGER
-  }, {
-    sequelize,
-    modelName: 'ChatList',
-  });
+
+  ChatList.init(
+    {
+      name: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        validate: { len: { args: [0, 255], msg: "Name too long" } },
+      },
+      type: {
+        type: DataTypes.ENUM("private", "group"),
+        allowNull: false,
+        validate: {
+          isIn: {
+            args: [["private", "group"]],
+            msg: "Type must be private or group",
+          },
+        },
+      },
+      lastMessageId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      isDeleted: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+      },
+    },
+    {
+      sequelize,
+      modelName: "ChatList",
+    }
+  );
+
   return ChatList;
 };

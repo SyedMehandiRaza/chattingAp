@@ -1,14 +1,26 @@
-const { User, sequelize } = require("../models");
+const {
+  User,
+  sequelize,
+  Message,
+  Reaction,
+  ChatParticipant,
+  ChatList,
+} = require("../models");
 const jwt = require("jsonwebtoken");
 const cookie = require("cookie");
 const messageService = require("../services/message.service");
-
 const redisClient = require("../config/redis");
 const { isRateLimited } = require("../utils/rateLimiter");
+const { Op, Transaction } = require("sequelize");
+const { message } = require("statuses");
 
 module.exports = (server) => {
-
-  const io = require("socket.io")(server);
+  const io = require("socket.io")(server, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"],
+    },
+  });
 
   io.use((socket, next) => {
     try {
@@ -27,32 +39,35 @@ module.exports = (server) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       socket.userId = decoded.id;
+      socket.userName = decoded.name;
       next();
     } catch (err) {
       return next(new Error("Invalid or expired token"));
     }
   });
 
-  io.on("connection", (socket) => {
-
+  io.on("connection", async (socket) => {
     socket.on("join", async () => {
       const userId = socket.userId;
-      socket.join(`user:${userId}`);
+      socket.join(`user:${socket.userId}`);
 
-      const keys = await redisClient.keys(
-        `unread:${userId}:*`
-      )
+      let keys = [];
+      try {
+        keys = await redisClient.keys(`unread:${userId}:*`);
+      } catch (err) {
+        console.error("Redis error:", err.message);
+      }
 
-      const unreadCounts = []
+      const unreadCounts = [];
 
-      for (const key of keys){
+      for (const key of keys) {
         const count = await redisClient.get(key);
         const senderId = key.split(":")[2];
 
         unreadCounts.push({
-        senderId: Number(senderId),
-        count: Number(count)
-      })
+          senderId: Number(senderId),
+          count: Number(count),
+        });
       }
 
       socket.emit("unread_counts", unreadCounts);
@@ -63,101 +78,260 @@ module.exports = (server) => {
       });
     });
 
+    socket.on("join_chat", ({ chatListId }) => {
+      if (!chatListId) return;
+      socket.join(`chat:${chatListId}`);
+    });
+
+    await User.update({ onlineStatus: true }, { where: { id: socket.userId } });
+
     socket.on("send_message", async (data) => {
+      console.log("socketn on sendMessage");
+      let { chatListId, message, type, receiverId } = data;
+      const senderId = socket.userId;
+
+      if (!message) return;
+
+      const t = await sequelize.transaction();
+      console.log(chatListId);
+      console.log(receiverId);
       try {
-        if(!data?.receiverId || !data?.message) return;
-        console.log(data);
-        
+        if (!chatListId && receiverId) {
+          const senderChats = await ChatParticipant.findAll({
+            where: { userId: senderId },
+            attributes: ["chatListId"],
+            raw: true,
+            transaction: t,
+          });
 
-        const allowedTypes = ["text", "image", "video", "audio", "file"];
-        if (data.type && !allowedTypes.includes(data.type)) return;
+          const chatIds = senderChats.map((c) => c.chatListId);
 
-        const limited = await isRateLimited(socket.userId);
-          if (limited) {
-            socket.emit("rate_limited", {
-              message: "Too many messages. Please slow down message count.",
+          let existingChat = null;
+
+          if (chatIds.length) {
+            existingChat = await ChatList.findOne({
+              where: {
+                id: { [Op.in]: chatIds },
+                type: "private",
+              },
+              include: [
+                {
+                  model: ChatParticipant,
+                  as: "participants",
+                  where: { userId: receiverId },
+                  required: true,
+                },
+              ],
+              transaction: t,
             });
-            return;
           }
 
-        const msg = await messageService.createMessage({
-          senderId: socket.userId,
-          receiverId: data.receiverId,
-          message: data.message,
-          type: data.type,
-        });
+          if (existingChat) {
+            chatListId = existingChat.id;
+          } else {
+            // 2️⃣ create chat
+            const chat = await ChatList.create(
+              { type: "private" },
+              { transaction: t }
+            );
 
+            await ChatParticipant.bulkCreate(
+              [
+                { chatListId: chat.id, userId: senderId },
+                { chatListId: chat.id, userId: receiverId },
+              ],
+              { transaction: t }
+            );
 
-        const receiverActiveChat = await redisClient.get(
-          `active_chat:${data.receiverId}`
+            chatListId = chat.id;
+          }
+        }
+
+        const msg = await Message.create(
+          {
+            chatListId,
+            senderId,
+            message,
+            type: type || "text",
+          },
+          { transaction: t }
         );
 
-        if (Number(receiverActiveChat) !== Number(socket.userId)) {
-          await redisClient.incr(
-            `unread:${data.receiverId}:${socket.userId}`
-          )
-          io.to(`user:${data.receiverId}`).emit("unread_update", {
-            fromUserId: socket.userId,
-          });
+        await ChatList.update(
+          { lastMessageId: msg.id },
+          { where: { id: chatListId }, transaction: t }
+        );
+
+        await t.commit();
+
+        io.to(`user:${senderId}`).emit("receive_message", msg);
+        io.to(`user:${receiverId}`).emit("receive_message", msg);
+      } catch (err) {
+        await t.rollback();
+        console.error(err);
+      }
+    });
+
+    socket.on("typing", ({ chatListId }) => {
+      socket.to(`chat:${chatListId}`).emit("user_typing", {
+        userId: socket.userId,
+        chatListId,
+      });
+    });
+
+    socket.on("stop_typing", ({ chatListId }) => {
+      socket.to(`chat:${chatListId}`).emit("stop_typing", {
+        userId: socket.userId,
+        chatListId,
+      });
+    });
+
+    socket.on("stop_typing", ({ chatListId }) => {
+      socket.to(`chat:${chatListId}`).emit("stop_typing", {
+        userId: socket.userId,
+      });
+    });
+
+    socket.on("chat_opened", async ({ chatListId }) => {
+      if (!chatListId) return;
+      await redisClient.set(`active_chat:${socket.userId}`, chatListId);
+    });
+
+    socket.on("mark_read", async ({ chatListId }) => {
+      if (!chatListId) return;
+      try {
+        await redisClient.del(`unread:${socket.userId}:${chatListId}`);
+      } catch (err) {
+        console.error("Redis DEL failed", err.message);
+      }
+
+      await Message.update(
+        { isRead: true },
+        {
+          where: {
+            chatListId,
+            senderId: { [Op.ne]: socket.userId },
+          },
+        }
+      );
+    });
+
+    socket.on("add_reaction", async ({ messageId, reactionType }) => {
+      try {
+        if (!messageId || !reactionType) return;
+        const userId = socket.userId;
+        const existing = await Reaction.findOne({
+          where: { messageId, userId },
+        });
+        let reaction;
+        if (existing) {
+          reaction = await existing.update({ reactionType });
         } else {
-          await messageService.markMessagesRead({
-            senderId: socket.userId,
-            receiverId: data.receiverId,
+          reaction = await Reaction.create({
+            messageId,
+            userId,
+            reactionType,
           });
         }
-        
-        io
-          .to(`user:${data.receiverId}`)
-          .to(`user:${socket.userId}`)
-          .emit("receive_message", msg);
-        // io.to(`user:${socket.userId}`).emit("receive_message", msg);
+
+        const msg = await Message.findByPk(messageId);
+
+        if (msg.groupId) {
+          io.to(`group:${msg.groupId}`).emit("reaction_update", {
+            messageId,
+            userId,
+            reactionType,
+          });
+        } else {
+          io.to(`chat:${msg.chatListId}`).emit("reaction_update", {
+            messageId,
+            userId,
+            reactionType,
+          });
+        }
       } catch (err) {
-        console.error("Message send error:", err.message);
+        console.error("reaction error:", err);
       }
     });
 
-    socket.on("typing", async({ receiverId }) => {
-      const senderId = socket.userId;
+    socket.on("create_group", async ({ name, userIds }) => {
+      const creatorId = socket.userId;
+      if (!name || !userIds || !userIds.length) return;
 
-      const receiverActiveChat = await redisClient.get(
-        `active_chat:${receiverId}`
-      )
+      const t = await sequelize.transaction();
+      try {
+        const group = await ChatList.create(
+          {
+            name,
+            type: "group",
+          },
+          {
+            transaction: t,
+          }
+        );
 
-      if (Number(receiverActiveChat) === Number(senderId)) {
-        io.to(`user:${receiverId}`).emit("user_typing", {
-          senderId,
-        });
+        await ChatParticipant.create(
+          {
+            chatListId: group.id,
+            userId: creatorId,
+            isAdmin: true,
+          },
+          {
+            transaction: t,
+          }
+        );
+
+        for (const uid of userIds) {
+          await ChatParticipant.create(
+            {
+              chatListId: group.id,
+              userId: uid,
+              isAdmin: false,
+            },
+            {
+              transaction: t,
+            }
+          );
+        }
+
+        const systemMessage = await Message.create(
+          {
+            chatListId: group.id,
+            senderId: creatorId,
+            message: `You are added in this group`,
+            type: "text",
+          },
+          {
+            transaction: t,
+          }
+        );
+
+        await ChatList.update(
+          {
+            lastMessageId: systemMessage.id,
+          },
+          {
+            where: { id: group.id },
+            transaction: t,
+          }
+        );
+
+        await t.commit();
+
+        const allUsers = [creatorId, ...userIds];
+
+        for (const uid of allUsers) {
+          io.to(`user:${uid}`).emit("group_created", {
+            chatListId: group.id,
+            name: group.name,
+            message: systemMessage,
+          });
+        }
+        console.log("aa gye yha");
+      } catch (error) {
+        await t.rollback();
+        console.log(error);
       }
-    });
-
-    socket.on("stop_typing", ({ receiverId }) => {
-      const senderId = socket.userId;
-
-      io.to(`user:${receiverId}`).emit("stop_typing", {
-        senderId,
-      });
-    });
-
-    socket.on("chat_opened", async({ withUserId }) => {
-      // activeChats.set(socket.userId, withUserId);
-      if(!withUserId) return
-      await redisClient.set(
-        `active_chat:${socket.userId}`,
-        withUserId
-      )
-    });
-
-    socket.on("mark_read", async ({ withUserId }) => {
-      if (!withUserId) return;
-
-      await redisClient.del(
-        `unread:${socket.userId}:${withUserId}`
-      );
-
-      await messageService.markMessagesRead({
-        senderId: withUserId,
-        receiverId: socket.userId,
-      });
     });
 
     socket.on("disconnect", async () => {
@@ -179,10 +353,7 @@ module.exports = (server) => {
         lastSeen,
       });
 
-      // activeChats.delete(socket.userId);
-      await redisClient.del(
-        `active_chat:${socket.userId}`
-      )
+      await redisClient.del(`active_chat:${socket.userId}`);
       io.emit("stop_typing", {
         senderId: socket.userId,
       });

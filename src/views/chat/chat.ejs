@@ -2,19 +2,44 @@
 
 <div class="container">
   <div class="users">
+    <h6><%= name %></h6>
+    <button 
+      class="btn btn-sm btn-primary"
+      data-bs-toggle="modal"
+      data-bs-target="#createGroupModal">
+        + Create Group
+    </button>
     <h3>Users</h3>
+
+    <input
+      type="text"
+      id="user-search"
+      placeholder="Search users..."
+      autocomplete="off"
+    />
+
+    <ul id="search-results"></ul>
 
     <% if (users && users.length) { %> <% users.forEach(u => { %>
     <div
       class="user-item"
-      id="user-<%= u.id %>"
-      onclick="openChat(<%= u.id %>, '<%= u.name %>')"
+      id="chat-<%= u.chatListId %>"
+      onclick="openChat(<%= u.chatListId %>, '<%= u.name %>', <%= u.userId %>)"
     >
-      <%= u.name %> <% if (u.unreadCount > 0) { %>
+      <strong><%= u.name %><% if (u.unreadCount > 0) { %>
       <span class="badgeC"><%= u.unreadCount %></span>
-      <% } %>
+      <% } %></strong>
+
+      <% if (u.lastMessage) { %>
+      <div class="preview">
+        <%= u.lastMessage.senderId === user.id ? "You: " : "" %> <%=
+        u.lastMessage.message.length > 22 ? u.lastMessage.message.slice(0, 22) +
+        "..." : u.lastMessage.message %>
+      </div>
+      <% } %> 
     </div>
-    <% }) %> <% } else { %>
+
+   <% }) %> <% } else { %>
     <p>No users found</p>
     <% } %>
 
@@ -29,8 +54,7 @@
       <p id="chat-status"></p>
     </div>
 
-    <div class="messages" id="messages">
-    </div>
+    <div class="messages" id="messages"></div>
 
     <div class="input">
       <label for="fileInput" style="cursor: pointer; margin-right: 8px"
@@ -45,64 +69,52 @@
       />
 
       <input type="text" id="msg" placeholder="Type message..." />
-      <button onclick="sendMessage()">Send</button>
+      <!-- <button onclick="sendMessage()">Send</button> -->
+      <button id="sndBtn">Send</button>
     </div>
   </div>
 </div>
 
 
+<!-- create goup modal -->
+ <div class="modal fade" id="createGroupModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5>Create Group</h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
 
+      <div class="modal-body">
+        <input
+          type="text"
+          id="group-name"
+          class="form-control mb-2"
+          placeholder="Group name"
+        />
 
+        <input
+          type="text"
+          id="group-user-search"
+          class="form-control"
+          placeholder="Search users..."
+        />
 
-<script src="/socket.io/socket.io.js"></script>
+        <ul id="group-search-results"></ul>
 
-<script>
-  let hasMore = true;
-  let isLoading = false;
+        <h6>Selected users</h6>
+        <ul id="selected-users"></ul>
+      
+      </div>
 
-  const box = document.getElementById("messages");
-
-  box.addEventListener("scroll", () => {
-    if (box.scrollTop === 0 && hasMore && !isLoading) {
-      loadOlderMessages();
-    }
-  });
-
-  function loadOlderMessages() {
-    if (!selectedUser) return;
-    isLoading = true;
-
-    const oldestMessage = box.firstChild; 
-    const before = oldestMessage?.dataset.createdAt;
-
-    let url = `/chat/history/${selectedUser}`;
-    if (before) url += `?before=${before}`;
-
-    fetch(url)
-      .then((res) => res.json())
-      .then((data) => {
-        const currentScrollHeight = box.scrollHeight;
-
-        data.messages.forEach((msg) => prependMessage(msg));
-
-        box.scrollTop = box.scrollHeight - currentScrollHeight;
-
-        hasMore = data.hasMore;
-        isLoading = false;
-      });
-  }
-
-
-  function prependMessage(msg) {
-    const box = document.getElementById("messages");
-    const div = document.createElement("div");
-    div.className = Number(msg.senderId) === Number(myId) ? "me" : "other";
-    div.innerText = msg.message;
-    div.dataset.createdAt = msg.createdAt;
-    box.prepend(div);
-  }
-</script>
+      <div class="modal-footer">
+        <button class="btn btn-success" onclick="createGroup()">
+          Create
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 
 <%- include("footer.ejs") %>
-

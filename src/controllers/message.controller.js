@@ -1,138 +1,214 @@
-const { User, Message } = require("../models");
+const redisClient = require("../config/redis");
+const {
+  User,
+  Message,
+  Reaction,
+  ChatList,
+  ChatParticipant,
+  sequelize,
+} = require("../models");
 const { Op } = require("sequelize");
 
-// exports.chatPage = async (req, res) => {
-//   const users = await User.findAll({
-//     where: { id: { [Op.ne]: req.user.id } },
-//   });
-
-//   res.render("chat", { users });
-// };
-
-// exports.markAsRead = async (req, res) => {
-//   console.log('inside markasread -------------------------------------- ');
+exports.searchUsers = async (req, res) => {
+  console.log("inside search");
   
-//   const { userId } = req.params;
+  const myId = req.user.id;
+  const { q } = req.query;
+
+  if (!q || q.trim().length < 2) return res.json([]);
+
+  const users = await User.findAll({
+    where: {
+      id: { [Op.ne]: myId },
+      name: { [Op.like]: `%${q}%` },
+    },
+    attributes: ["id", "name", "profilePic"],
+    limit: 20,
+  });
+
+  res.json(users);
+};
+
+// exports.startChat = async (req, res) => {
 //   const myId = req.user.id;
+//   const { userId } = req.body;
 
-//   await Message.update(
-//     { isRead: true },
-//     {
-//       where: {
-//         senderId: userId,
-//         receiverId: myId,
-//         isRead: false,
-//       },
-//     }
-//   );
+//   const t = await sequelize.transaction();
 
-//   res.json({ success: true });
-// };
-
-// exports.chatList = async (req, res) => {
-//   const myId = req.user.id;
-
-//   const users = await User.findAll({
-//     where: { id: { [Op.ne]: myId } },
-//   });
-
-//   let finalList = [];
-
-//   for (let u of users) {
-//     const lastMsg = await Message.findOne({
-//       where: {
-//         [Op.or]: [
-//           { senderId: myId, receiverId: u.id },
-//           { senderId: u.id, receiverId: myId },
-//         ],
-//       },
-//       order: [["createdAt", "DESC"]],
-//     });
-
-//     const unreadCount = await Message.count({
-//       where: {
-//         senderId: u.id,
-//         receiverId: myId,
-//         isRead: false,
-//       },
-//     });
-
-//     finalList.push({
-//       user: u,
-//       lastMessage: lastMsg ? lastMsg.message : "",
-//       unreadCount,
-//     });
-//   }
-
-//   res.json(finalList);
-// };
-
-// exports.chatList = async (req, res) => {
 //   try {
-//     const myId = req.user.id; // read from JWT
-
-//     // Get all other users
-//     const users = await User.findAll({
-//       where: { id: { [Op.ne]: myId } },
-//       raw: true,
+//     if (!userId) {
+//       return res.status(400).json({ message: "User required" });
+//     }
+//     const chats = await ChatParticipant.findAll({
+//       where: { userId: myId },
+//       include: [
+//         {
+//           model: ChatList,
+//           as: "ChatList",
+//           where: { type: "private" },
+//           include: [
+//             {
+//               model: ChatParticipant,
+//               as: "participants",
+//               where: { userId },
+//             },
+//           ],
+//         },
+//       ],
 //     });
 
-//     const userIds = users.map((u) => u.id);
+//     let chat = chats.length ? chats[0].ChatList : null;
 
-//     if (userIds.length === 0) return res.json([]);
+//     if (!chat) {
+//       chat = await ChatList.create({ type: "private" }, { transaction: t });
 
-//     // Get all last messages between myId and all users
-//     const messages = await Message.findAll({
-//       where: {
-//         [Op.or]: [
-//           { senderId: myId, receiverId: userIds },
-//           { senderId: userIds, receiverId: myId },
+//       await ChatParticipant.bulkCreate(
+//         [
+//           { chatListId: chat.id, userId: myId },
+//           { chatListId: chat.id, userId },
 //         ],
-//       },
-//       order: [["createdAt", "DESC"]],
-//       raw: true,
-//     });
-
-//     // group messages user-wise
-//     const lastMessageMap = {};
-//     for (let msg of messages) {
-//       const chatPartner = msg.senderId === myId ? msg.receiverId : msg.senderId;
-
-//       if (!lastMessageMap[chatPartner]) {
-//         lastMessageMap[chatPartner] = msg;
-//       }
+//         { transaction: t }
+//       );
 //     }
 
-//     // Get unread message counts for all users
-//     const unreadCounts = await Message.findAll({
-//       where: {
-//         senderId: userIds,
-//         receiverId: myId,
-//         isRead: false,
-//       },
-//       attributes: ["senderId", [Sequelize.fn("COUNT", "senderId"), "count"]],
-//       group: ["senderId"],
-//       raw: true,
+//     await t.commit();
+
+//     const otherUser = await User.findByPk(userId, {
+//       attributes: ["id", "name", "profilePic"],
 //     });
 
-//     const unreadMap = {};
-//     unreadCounts.forEach((u) => {
-//       unreadMap[u.senderId] = u.count;
+//     return res.json({
+//       chatListId: chat.id,
+//       user: otherUser,
 //     });
-
-//     // Build final list
-//     const finalList = users.map((u) => ({
-//       user: u,
-//       lastMessage: lastMessageMap[u.id]?.message || "",
-//       unreadCount: unreadMap[u.id] || 0,
-//     }));
-
-//     res.json(finalList);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ error: "Internal server error" });
+//   } catch (error) {
+//     await t.rollback();
+//     console.log(error);
 //   }
 // };
+
+exports.startChat = async (req, res) => {
+  const myId = req.user.id;
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ message: "User required" });
+  }
+
+  const chat = await ChatList.findOne({
+    where: { type: "private" },
+    include: [{
+      model: ChatParticipant,
+      as: "participants",
+      where: { userId: { [Op.in]: [myId, userId] } },
+    }],
+  });
+
+  if (!chat) {
+    return res.json({
+      chatListId: null,
+      user: await User.findByPk(userId, {
+        attributes: ["id", "name", "profilePic"],
+      }),
+    });
+  }
+
+  return res.json({
+    chatListId: chat.id,
+    user: await User.findByPk(userId, {
+      attributes: ["id", "name", "profilePic"],
+    }),
+  });
+};
+
+exports.sendMessage = async (req, res) => {
+  const { receiverId, message, type } = req.body;
+  const senderId = req.user.id;
+
+  const chat = await getOrCreatePrivateChat(senderId, receiverId);
+
+  const msg = await Message.create({
+    chatListId: chat.id,
+    senderId,
+    message,
+    type: type || "text",
+  });
+
+  res.json(msg);
+};
+
+async function getSidebarUsers(currentUserId) {
+  
+  const chatLists = await ChatList.findAll({
+  include: [
+    {
+      model: ChatParticipant,
+      as: "participants",
+      include: [
+        {
+          model: User,
+          as: "User",
+          attributes: ["id", "name", "profilePic", "onlineStatus", "lastSeen"]
+        }
+      ]
+    },
+    {
+      model: Message,
+      as: "lastMessage",
+      attributes: ["message", "type", "senderId", "createdAt"]
+    }
+  ],
+  where: {
+    id: {
+      [Op.in]: sequelize.literal(`
+        (SELECT chatListId FROM ChatParticipants WHERE userId = ${currentUserId})
+      `)
+    }
+  },
+  order: [[{ model: Message, as: "lastMessage" }, "createdAt", "DESC"]],
+  distinct: true
+});
+
+  const redisKeys = await redisClient.keys(`unread:${currentUserId}:*`);
+  const unreadMap = {};
+  for (const key of redisKeys) {
+    const count = await redisClient.get(key);
+    const chatId = key.split(":")[2];
+    unreadMap[chatId] = Number(count);
+  }
+
+  
+  const sidebar = chatLists.map((chat) => {
+    const isGroup = chat.type === "group";
+
+    let name = chat.name || "Unnamed Group";
+    let profilePic = null;
+    let userId;
+
+    if (!isGroup) {
+      const other = chat.participants
+        .map((p) => p.User)
+        .find((u) => u && u.id !== currentUserId);
+        console.log("other people not groups: ++++++++++++++++++++++++++++++++++",other)
+
+      name = other?.name || "Unknown";
+      profilePic = other?.profilePic || null;
+      userId = other?.id
+    }
+
+    return {
+      userId,
+      chatListId: chat.id,
+      chatType: chat.type,
+      name,
+      profilePic,
+      lastMessage: chat.lastMessage || null,
+      unreadCount: unreadMap[chat.id] || 0,
+    };
+  });
+
+  return sidebar;
+}
 
 exports.editChat = async (req, res) => {
   try {
@@ -142,7 +218,7 @@ exports.editChat = async (req, res) => {
 
     if (!newMessage || newMessage.trim() === "") {
       req.flash("error", "Message can not be empty");
-      return rew.redirect("back");
+      return res.redirect("back");
     }
 
     const msg = await Message.findByPk(messageId);
@@ -162,13 +238,15 @@ exports.editChat = async (req, res) => {
       return res.redirect("back");
     }
 
-    await Message.update({
-      message: newMessage,
-      isEdited: true,
-    },
-    {
-      where: { id: messageId }
-    });
+    await Message.update(
+      {
+        message: newMessage,
+        isEdited: true,
+      },
+      {
+        where: { id: messageId },
+      }
+    );
     req.flash("success", "Message Editted");
     return res.redirect("back");
   } catch (error) {
@@ -179,8 +257,8 @@ exports.editChat = async (req, res) => {
 
 exports.deleteChat = async (req, res) => {
   try {
-    console.log('inside chat');
-    
+    console.log("inside chat");
+
     const { messageId } = req.params;
     const userId = req.user.id;
     const msg = await Message.findByPk(messageId);
@@ -199,16 +277,14 @@ exports.deleteChat = async (req, res) => {
       return res.redirect("back");
     }
 
-    const deleteChat = await Message.update({
-      message: "this message is deleted",
-      isDeleted: true,
-    },
-    {
-      where: { id: messageId }
-    });
-    console.log("deleteChat ----------------- ",deleteChat);
-    
-
+    await Message.update(
+      {
+        isDeleted: true,
+      },
+      {
+        where: { id: messageId },
+      }
+    );
     req.flash("success", "message is deleted successfully");
     return res.redirect("back");
   } catch (error) {
@@ -218,57 +294,508 @@ exports.deleteChat = async (req, res) => {
 };
 
 exports.renderChats = async (req, res) => {
-  const myId = req.user.id; 
-  // console.log("my id ------------------------>",myId);
-  
-  const users = await User.findAll({
-    where: { id: { [Op.ne]: myId } },
-    raw: true,
-  });
-  res.render("chat/chat.ejs", { users, user: req.user });
+  try {
+    const myId = req.user.id;
+    console.log(req.user);
+
+    const allUsers = await User.findAll({
+      where: { id: { [Op.ne]: myId } },
+      raw: true,
+    });
+
+    const users = await getSidebarUsers(myId);
+    console.log("users from render chats: <+==============-----*****-----===============+>",users);
+
+    res.render("chat/chat.ejs", {
+      users,
+      user: req.user,
+      name: req.user.email,
+    });
+  } catch (error) {
+    console.log(error, "error in render chats");
+    req.flash("error", "Something went wrong");
+    res.redirect("back");
+  }
 };
 
 exports.getChatHistory = async (req, res) => {
   try {
     const myId = req.user.id;
-    const { receiverId } = req.params;
+    const { chatListId } = req.params;
     const limit = 12;
-
     const before = req.query.before;
-
-    const where = {
-      [Op.or]: [
-        { senderId: myId, receiverId },
-        { senderId: receiverId, receiverId: myId },
-      ],
-    };
-
-    if (before) {
-      where.createdAt = { [Op.lt]: new Date(before) }; 
+    if (!chatListId) {
+      return res.status(400).json({ message: "chatListId is required" });
     }
+
+    // SECURITY: verify user belongs to chat
+    const isParticipant = await ChatParticipant.findOne({
+      where: { chatListId, userId: myId },
+    });
+
+    if (!isParticipant) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const where = { chatListId };
+    if (before) where.createdAt = { [Op.lt]: new Date(before) };
 
     const messages = await Message.findAll({
       where,
-      order: [["createdAt", "DESC"]], 
+      order: [["createdAt", "DESC"]],
       limit,
-      raw: true,
+      include: [
+        { model: Reaction, as: "Reactions" },
+        { model: User, as: "sender", attributes: ["id", "name", "profilePic"] },
+      ],
     });
-
-    console.log(messages,'page ------------------------------------------------- >');
 
     res.json({
       messages: messages.reverse(),
       hasMore: messages.length === limit,
     });
-  } catch (error) {
-    console.error("Error fetching chat history:", error);
-    res.status(500).json({ message: "Failed to load chat history" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to load chat" });
   }
 };
 
 exports.getUserStatus = async (req, res) => {
   const user = await User.findByPk(req.params.userId, {
-    attributes: ["onlineStatus", "lastSeen"]
+    attributes: ["onlineStatus", "lastSeen"],
   });
   res.json(user);
 };
+
+exports.getChatInfo = async (req, res) => {
+  const myId = req.user.id;
+  const { chatListId } = req.params;
+
+  const participant = await ChatParticipant.findOne({
+    where: { chatListId, userId: myId },
+  });
+
+  if (!participant) {
+    return res.status(403).json({ message: "Access denied" });
+  }
+
+  const other = await ChatParticipant.findOne({
+    where: {
+      chatListId,
+      userId: { [Op.ne]: myId },
+    },
+    include: [
+      {
+        model: User,
+        attributes: ["id", "name", "profilePic"],
+      },
+    ],
+  });
+
+  res.json({
+    chatListId,
+    user: {
+      id: other.User.id,
+      name: other.User.name,
+      profilePic: other.User.profilePic,
+    },
+  });
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// const redisClient = require("../config/redis");
+// const {
+//   User,
+//   Message,
+//   Reaction,
+//   ChatList,
+//   ChatParticipant,
+//   sequelize,
+// } = require("../models");
+// const { Op } = require("sequelize");
+
+// exports.searchUsers = async (req, res) => {
+//   const myId = req.user.id;
+//   const { q } = req.query;
+
+//   if (!q || q.trim().length < 2) return res.json([]);
+
+//   const users = await User.findAll({
+//     where: {
+//       id: { [Op.ne]: myId },
+//       name: { [Op.like]: `%${q}%` },
+//     },
+//     attributes: ["id", "name", "profilePic"],
+//     limit: 20,
+//   });
+
+//   res.json(users);
+// };
+
+// exports.startChat = async (req, res) => {
+//   const myId = req.user.id;
+//   const { userId } = req.body;
+
+//   const t = await sequelize.transaction();
+
+//   try {
+//     if (!userId) {
+//       return res.status(400).json({ message: "User required" });
+//     }
+//     const chats = await ChatParticipant.findAll({
+//       where: { userId: myId },
+//       include: [
+//         {
+//           model: ChatList,
+//           as: "ChatList",
+//           where: { type: "private" },
+//           include: [
+//             {
+//               model: ChatParticipant,
+//               as: "participants",
+//               where: { userId },
+//             },
+//           ],
+//         },
+//       ],
+//     });
+
+//     let chat = chats.length ? chats[0].ChatList : null;
+
+//     if (!chat) {
+//       chat = await ChatList.create({ type: "private" }, { transaction: t });
+
+//       await ChatParticipant.bulkCreate(
+//         [
+//           { chatListId: chat.id, userId: myId },
+//           { chatListId: chat.id, userId },
+//         ],
+//         { transaction: t }
+//       );
+//     }
+
+//     await t.commit();
+
+//     const otherUser = await User.findByPk(userId, {
+//       attributes: ["id", "name", "profilePic"],
+//     });
+
+//     return res.json({
+//       chatListId: chat.id,
+//       user: otherUser,
+//     });
+//   } catch (error) {
+//     await t.rollback();
+//     console.log(error);
+//   }
+// };
+
+// exports.sendMessage = async (req, res) => {
+//   const { receiverId, message, type } = req.body;
+//   const senderId = req.user.id;
+
+//   const chat = await getOrCreatePrivateChat(senderId, receiverId);
+
+//   const msg = await Message.create({
+//     chatListId: chat.id,
+//     senderId,
+//     message,
+//     type: type || "text",
+//   });
+
+//   res.json(msg);
+// };
+
+// async function getSidebarUsers(currentUserId) {
+  
+//   const chatLists = await ChatList.findAll({
+//   include: [
+//     {
+//       model: ChatParticipant,
+//       as: "participants",
+//       include: [
+//         {
+//           model: User,
+//           as: "User",
+//           attributes: ["id", "name", "profilePic", "onlineStatus", "lastSeen"]
+//         }
+//       ]
+//     },
+//     {
+//       model: Message,
+//       as: "lastMessage",
+//       attributes: ["message", "type", "senderId", "createdAt"]
+//     }
+//   ],
+//   where: {
+//     id: {
+//       [Op.in]: sequelize.literal(`
+//         (SELECT chatListId FROM ChatParticipants WHERE userId = ${currentUserId})
+//       `)
+//     }
+//   },
+//   order: [[{ model: Message, as: "lastMessage" }, "createdAt", "DESC"]],
+//   distinct: true
+// });
+
+//   const redisKeys = await redisClient.keys(`unread:${currentUserId}:*`);
+//   const unreadMap = {};
+//   for (const key of redisKeys) {
+//     const count = await redisClient.get(key);
+//     const chatId = key.split(":")[2];
+//     unreadMap[chatId] = Number(count);
+//   }
+
+  
+//   const sidebar = chatLists.map((chat) => {
+//     const isGroup = chat.type === "group";
+
+//     let name = chat.name || "Unnamed Group";
+//     let profilePic = null;
+//     let userId;
+
+//     if (!isGroup) {
+//       const other = chat.participants
+//         .map((p) => p.User)
+//         .find((u) => u && u.id !== currentUserId);
+//         console.log("other people not groups: ++++++++++++++++++++++++++++++++++",other)
+
+//       name = other?.name || "Unknown";
+//       profilePic = other?.profilePic || null;
+//       userId = other?.id
+//     }
+
+//     return {
+//       userId,
+//       chatListId: chat.id,
+//       chatType: chat.type,
+//       name,
+//       profilePic,
+//       lastMessage: chat.lastMessage || null,
+//       unreadCount: unreadMap[chat.id] || 0,
+//     };
+//   });
+
+//   return sidebar;
+// }
+
+// exports.editChat = async (req, res) => {
+//   try {
+//     const { messageId } = req.params;
+//     const userId = req.user.id;
+//     const { newMessage } = req.body;
+
+//     if (!newMessage || newMessage.trim() === "") {
+//       req.flash("error", "Message can not be empty");
+//       return res.redirect("back");
+//     }
+
+//     const msg = await Message.findByPk(messageId);
+
+//     if (!msg) {
+//       req.flash("error", "Message not found");
+//       return res.redirect("back");
+//     }
+
+//     if (msg.senderId !== userId) {
+//       req.flash("error", "only sender can edit msg");
+//       return res.redirect("back");
+//     }
+
+//     if (msg.isDeleted) {
+//       req.flash("error", "cant edit deleted msg");
+//       return res.redirect("back");
+//     }
+
+//     await Message.update(
+//       {
+//         message: newMessage,
+//         isEdited: true,
+//       },
+//       {
+//         where: { id: messageId },
+//       }
+//     );
+//     req.flash("success", "Message Editted");
+//     return res.redirect("back");
+//   } catch (error) {
+//     console.error("error in message edit controller", error);
+//     req.flash("error", "Something went wrong");
+//   }
+// };
+
+// exports.deleteChat = async (req, res) => {
+//   try {
+//     console.log("inside chat");
+
+//     const { messageId } = req.params;
+//     const userId = req.user.id;
+//     const msg = await Message.findByPk(messageId);
+
+//     if (!msg) {
+//       req.flash("error", "Message not found");
+//       return res.redirect("back");
+//     }
+
+//     if (msg.isDeleted) {
+//       req.flash("error", "messaeg already deleted");
+//       return res.redirect("back");
+//     }
+//     if (msg.senderId !== userId) {
+//       req.flash("error", "Message can be deleted by sender only");
+//       return res.redirect("back");
+//     }
+
+//     await Message.update(
+//       {
+//         isDeleted: true,
+//       },
+//       {
+//         where: { id: messageId },
+//       }
+//     );
+//     req.flash("success", "message is deleted successfully");
+//     return res.redirect("back");
+//   } catch (error) {
+//     console.error(error);
+//     req.flash("error", "Something went wrong");
+//   }
+// };
+
+// exports.renderChats = async (req, res) => {
+//   try {
+//     const myId = req.user.id;
+//     console.log(req.user);
+
+//     const allUsers = await User.findAll({
+//       where: { id: { [Op.ne]: myId } },
+//       raw: true,
+//     });
+
+//     const users = await getSidebarUsers(myId);
+//     console.log("users from render chats: <+==============-----*****-----===============+>",users);
+
+//     res.render("chat/chat.ejs", {
+//       users,
+//       user: req.user,
+//       name: req.user.email,
+//     });
+//   } catch (error) {
+//     console.log(error, "error in render chats");
+//     req.flash("error", "Something went wrong");
+//     res.redirect("back");
+//   }
+// };
+
+// exports.getChatHistory = async (req, res) => {
+//   try {
+//     const myId = req.user.id;
+//     const { chatListId } = req.params;
+//     const limit = 12;
+//     const before = req.query.before;
+//     if (!chatListId) {
+//       return res.status(400).json({ message: "chatListId is required" });
+//     }
+
+//     // SECURITY: verify user belongs to chat
+//     const isParticipant = await ChatParticipant.findOne({
+//       where: { chatListId, userId: myId },
+//     });
+
+//     if (!isParticipant) {
+//       return res.status(403).json({ message: "Access denied" });
+//     }
+
+//     const where = { chatListId };
+//     if (before) where.createdAt = { [Op.lt]: new Date(before) };
+
+//     const messages = await Message.findAll({
+//       where,
+//       order: [["createdAt", "DESC"]],
+//       limit,
+//       include: [
+//         { model: Reaction, as: "Reactions" },
+//         { model: User, as: "sender", attributes: ["id", "name", "profilePic"] },
+//       ],
+//     });
+
+//     res.json({
+//       messages: messages.reverse(),
+//       hasMore: messages.length === limit,
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Failed to load chat" });
+//   }
+// };
+
+// exports.getUserStatus = async (req, res) => {
+//   const user = await User.findByPk(req.params.userId, {
+//     attributes: ["onlineStatus", "lastSeen"],
+//   });
+//   res.json(user);
+// };
+
+// exports.getChatInfo = async (req, res) => {
+//   const myId = req.user.id;
+//   const { chatListId } = req.params;
+
+//   const participant = await ChatParticipant.findOne({
+//     where: { chatListId, userId: myId },
+//   });
+
+//   if (!participant) {
+//     return res.status(403).json({ message: "Access denied" });
+//   }
+
+//   const other = await ChatParticipant.findOne({
+//     where: {
+//       chatListId,
+//       userId: { [Op.ne]: myId },
+//     },
+//     include: [
+//       {
+//         model: User,
+//         attributes: ["id", "name", "profilePic"],
+//       },
+//     ],
+//   });
+
+//   res.json({
+//     chatListId,
+//     user: {
+//       id: other.User.id,
+//       name: other.User.name,
+//       profilePic: other.User.profilePic,
+//     },
+//   });
+// };

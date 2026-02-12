@@ -23,3 +23,59 @@ redisClient.on("error", (err) => {
 })();
 
 module.exports = redisClient;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// const redis = require("redis");
+
+// const redisClient = redis.createClient({
+//   socket: {
+//     reconnectStrategy: (retries) => {
+//       console.log("Redis reconnect attempt:", retries);
+//       return Math.min(retries * 100, 3000);
+//     },
+//   },
+// });
+
+// redisClient.on("connect", () => {
+//   console.log("Redis connected");
+// });
+
+// redisClient.on("ready", () => {
+//   console.log("Redis ready");
+// });
+
+// redisClient.on("error", (err) => {
+//   console.error("Redis error:", err.message);
+// });
+
+// redisClient.on("end", () => {
+//   console.log("Redis connection closed");
+// });
+
+// (async () => {
+//   try {
+//     await redisClient.connect();
+//   } catch (err) {
+//     console.error("Redis initial connect failed:", err.message);
+//   }
+// })();
+
+// module.exports = redisClient;
